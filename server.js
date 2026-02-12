@@ -74,6 +74,13 @@ const roomHosts = new Map();
 io.on('connection', (socket) => {
     console.log(`User connected: ${socket.id}`);
 
+    // Helper to broadcast user count
+    const broadcastUserCount = (roomCode) => {
+        const room = io.sockets.adapter.rooms.get(roomCode);
+        const count = room ? room.size : 0;
+        io.to(roomCode).emit('updateUserCount', { count });
+    };
+
     // --- 1. CREATE ROOM ---
     socket.on('createRoom', () => {
         // Generate a random 4-letter code
@@ -84,6 +91,9 @@ io.on('connection', (socket) => {
         
         console.log(`Room created: ${roomCode} by ${socket.id}`);
         socket.emit('roomCreated', roomCode);
+
+        // Emit initial count (1)
+        socket.emit('updateUserCount', { count: 1 });
     });
 
     // --- 2. JOIN ROOM ---
@@ -105,6 +115,9 @@ io.on('connection', (socket) => {
             if (hostId) {
                 io.to(hostId).emit('requestSync', socket.id);
             }
+
+            // Update Count for Everyone
+            broadcastUserCount(upperCode);
         } else {
             socket.emit('error', 'Room not found! Check the code.');
         }
@@ -162,11 +175,29 @@ io.on('connection', (socket) => {
                 // If Guest leaves, just notify others
                 socket.leave(roomCode);
                 socket.to(roomCode).emit('userLeft');
+                // Update count after guest leaves
+                broadcastUserCount(roomCode);
             }
         }
     });
 
-    // --- 7. DISCONNECT ---
+    // --- 7. DISCONNECT & DISCONNECTING ---
+    // 'disconnecting' runs BEFORE the user leaves rooms, allowing us to see where they were
+    socket.on('disconnecting', () => {
+        for (const room of socket.rooms) {
+            if (room !== socket.id) {
+                // Determine new count (current size - 1 since they are leaving)
+                const roomData = io.sockets.adapter.rooms.get(room);
+                const newCount = roomData ? roomData.size - 1 : 0;
+                
+                // Only broadcast if people remain
+                if (newCount > 0) {
+                    socket.to(room).emit('updateUserCount', { count: newCount });
+                }
+            }
+        }
+    });
+
     socket.on('disconnect', () => {
         console.log(`User disconnected: ${socket.id}`);
         
