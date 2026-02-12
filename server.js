@@ -160,7 +160,15 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- 6. LEAVE ROOM (Updated for Host Logic) ---
+    // --- 6. CHAT (Broadcast to others) ---
+    socket.on('chatMessage', (data) => {
+        // data: { room, message, senderName }
+        if (data.room && data.message) {
+            socket.to(data.room).emit('chatMessage', data);
+        }
+    });
+
+    // --- 7. LEAVE ROOM (Updated for Host Logic) ---
     socket.on('leaveRoom', (roomCode) => {
         if (roomCode) {
             const isHost = roomHosts.get(roomCode) === socket.id;
@@ -181,7 +189,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- 7. DISCONNECT & DISCONNECTING ---
+    // --- 8. DISCONNECT & DISCONNECTING ---
     // 'disconnecting' runs BEFORE the user leaves rooms, allowing us to see where they were
     socket.on('disconnecting', () => {
         for (const room of socket.rooms) {
