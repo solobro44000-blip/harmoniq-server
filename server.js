@@ -164,6 +164,7 @@ io.on('connection', (socket) => {
     socket.on('chatMessage', (data) => {
         // data: { room, message, senderName }
         if (data.room && data.message) {
+            // Broadcast to everyone else in the room
             socket.to(data.room).emit('chatMessage', data);
         }
     });
