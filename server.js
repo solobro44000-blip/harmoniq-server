@@ -99,6 +99,12 @@ io.on('connection', (socket) => {
             
             // Notify other users in the room
             socket.to(upperCode).emit('userJoined');
+
+            // Ask the Host to send their current song info to this new user
+            const hostId = roomHosts.get(upperCode);
+            if (hostId) {
+                io.to(hostId).emit('requestSync', socket.id);
+            }
         } else {
             socket.emit('error', 'Room not found! Check the code.');
         }
@@ -124,34 +130,38 @@ io.on('connection', (socket) => {
 
     // --- 5. PLAYBACK CONTROLS (Host -> Server -> Guests) ---
     socket.on('play', (data) => {
-        // Expected data: { room, time }
         if (data && data.room) {
             socket.to(data.room).emit('play', data);
         }
     });
 
     socket.on('pause', (data) => {
-        // Expected data: { room, time }
         if (data && data.room) {
             socket.to(data.room).emit('pause', data);
         }
     });
 
     socket.on('changeTrack', (data) => {
-        // Expected data: { room, track, time, isPlaying }
         if (data && data.room) {
             socket.to(data.room).emit('changeTrack', data);
         }
     });
 
-    // --- 6. LEAVE ROOM ---
+    // --- 6. LEAVE ROOM (Updated for Host Logic) ---
     socket.on('leaveRoom', (roomCode) => {
         if (roomCode) {
-            socket.leave(roomCode);
-            socket.to(roomCode).emit('userLeft');
-            
-            if (roomHosts.get(roomCode) === socket.id) {
+            const isHost = roomHosts.get(roomCode) === socket.id;
+
+            if (isHost) {
+                // If Host leaves, close the room for everyone
+                io.to(roomCode).emit('roomClosed'); 
+                io.in(roomCode).socketsLeave(roomCode); // Force everyone out
                 roomHosts.delete(roomCode);
+                console.log(`Room closed by host: ${roomCode}`);
+            } else {
+                // If Guest leaves, just notify others
+                socket.leave(roomCode);
+                socket.to(roomCode).emit('userLeft');
             }
         }
     });
@@ -159,6 +169,18 @@ io.on('connection', (socket) => {
     // --- 7. DISCONNECT ---
     socket.on('disconnect', () => {
         console.log(`User disconnected: ${socket.id}`);
+        
+        // Check if this user was a host of any room
+        for (const [roomCode, hostId] of roomHosts.entries()) {
+            if (hostId === socket.id) {
+                // Host disconnected -> Close room
+                io.to(roomCode).emit('roomClosed');
+                io.in(roomCode).socketsLeave(roomCode);
+                roomHosts.delete(roomCode);
+                console.log(`Host disconnected, closed room: ${roomCode}`);
+                break;
+            }
+        }
     });
 });
 
