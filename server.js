@@ -6,22 +6,13 @@ const cors = require('cors');
 const app = express();
 
 // --- CONFIGURATION ---
-// 1. Allow your specific website to connect
-// 2. Allow "localhost" so you can test it on your own computer before uploading
-const allowedOrigins = [
-    "https://harmoniqbeatx.ccbp.tech",
-    "http://127.0.0.1:5500", // Common local testing port
-    "http://localhost:3000"
-];
-
+// Set to "*" to prevent any CORS issues across your different deployments
 app.use(cors({
-    origin: allowedOrigins,
+    origin: "*",
     methods: ["GET", "POST"]
 }));
 
 // --- KEEP-ALIVE ROUTE (For Cron Job) ---
-// When you visit the server URL directly, this page will show up.
-// Set your Cron Job to ping this URL every 14 minutes.
 app.get('/', (req, res) => {
     res.send(`
         <!DOCTYPE html>
@@ -72,7 +63,7 @@ const server = http.createServer(app);
 // --- SOCKET.IO SETUP ---
 const io = new Server(server, {
     cors: {
-        origin: allowedOrigins,
+        origin: "*",
         methods: ["GET", "POST"]
     }
 });
@@ -105,56 +96,72 @@ io.on('connection', (socket) => {
             socket.join(upperCode);
             console.log(`User ${socket.id} joined room ${upperCode}`);
             socket.emit('roomJoined', upperCode);
-
-            // Ask the Host to send their current song info to this new user
-            const hostId = roomHosts.get(upperCode);
-            if (hostId) {
-                io.to(hostId).emit('requestSync', socket.id);
-            }
+            
+            // Notify other users in the room
+            socket.to(upperCode).emit('userJoined');
         } else {
             socket.emit('error', 'Room not found! Check the code.');
         }
     });
 
-    // --- 3. SYNC DATA (Host -> New Guest) ---
-    socket.on('sendSyncData', (data) => {
-        // data: { targetGuestId, currentTime, songIndex/Url, isPlaying }
-        if (data.targetGuestId) {
-            io.to(data.targetGuestId).emit('syncGuest', data);
+    // --- 3. SYNC REQUESTS (Guest -> Server -> Host) ---
+    // When a guest joins, they request the current state
+    socket.on('requestSync', (roomId) => {
+        const hostId = roomHosts.get(roomId);
+        if (hostId) {
+            io.to(hostId).emit('requestSync');
         }
     });
 
-    // --- 4. PLAYBACK CONTROLS (Broadcast to everyone else) ---
-    
-    // Play
-    socket.on('play', (roomCode) => {
-        socket.to(roomCode).emit('play');
+    // --- 4. SYNC DATA (Host -> Server -> Guests) ---
+    // The host responds with the current track and timestamp
+    socket.on('syncData', (data) => {
+        // Expected data: { room, track, time, isPlaying }
+        if (data && data.room) {
+            socket.to(data.room).emit('syncData', data);
+        }
     });
 
-    // Pause
-    socket.on('pause', (roomCode) => {
-        socket.to(roomCode).emit('pause');
+    // --- 5. PLAYBACK CONTROLS (Host -> Server -> Guests) ---
+    socket.on('play', (data) => {
+        // Expected data: { room, time }
+        if (data && data.room) {
+            socket.to(data.room).emit('play', data);
+        }
     });
 
-    // Seek (Change Time)
-    socket.on('seek', (data) => {
-        // data: { roomCode, time }
-        socket.to(data.roomCode).emit('seek', data.time);
+    socket.on('pause', (data) => {
+        // Expected data: { room, time }
+        if (data && data.room) {
+            socket.to(data.room).emit('pause', data);
+        }
     });
 
-    // Change Track (Next/Prev)
     socket.on('changeTrack', (data) => {
-        // data: { roomCode, songIndex }
-        socket.to(data.roomCode).emit('changeTrack', data.songIndex);
+        // Expected data: { room, track, time, isPlaying }
+        if (data && data.room) {
+            socket.to(data.room).emit('changeTrack', data);
+        }
     });
 
-    // --- 5. DISCONNECT ---
+    // --- 6. LEAVE ROOM ---
+    socket.on('leaveRoom', (roomCode) => {
+        if (roomCode) {
+            socket.leave(roomCode);
+            socket.to(roomCode).emit('userLeft');
+            
+            if (roomHosts.get(roomCode) === socket.id) {
+                roomHosts.delete(roomCode);
+            }
+        }
+    });
+
+    // --- 7. DISCONNECT ---
     socket.on('disconnect', () => {
         console.log(`User disconnected: ${socket.id}`);
     });
 });
 
-// Use the port Render assigns, or 3000 locally
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
