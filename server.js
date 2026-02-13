@@ -154,7 +154,6 @@ io.on('connection', (socket) => {
     // --- 5. PLAYBACK CONTROLS ---
     // In 'collaborative' mode, ANY user can trigger these. 
     // In 'concert' mode, usually only Host triggers these, but the server just forwards regardless.
-    // The Client is responsible for enforcing the "who can click" logic.
     socket.on('play', (data) => {
         if (data && data.room) {
             socket.to(data.room).emit('play', data);
