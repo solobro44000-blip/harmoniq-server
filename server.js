@@ -70,6 +70,8 @@ const io = new Server(server, {
 
 // Store who is the host of which room
 const roomHosts = new Map();
+// Store the type of each room ('concert' or 'collaborative')
+const roomTypes = new Map();
 
 io.on('connection', (socket) => {
     console.log(`User connected: ${socket.id}`);
@@ -82,15 +84,18 @@ io.on('connection', (socket) => {
     };
 
     // --- 1. CREATE ROOM ---
-    socket.on('createRoom', () => {
+    socket.on('createRoom', (type) => {
         // Generate a random 4-letter code
         const roomCode = Math.random().toString(36).substring(2, 6).toUpperCase();
+        const roomType = type || 'concert'; // Default to concert if not specified
         
         socket.join(roomCode);
         roomHosts.set(roomCode, socket.id); // The creator is the Host
+        roomTypes.set(roomCode, roomType);
         
-        console.log(`Room created: ${roomCode} by ${socket.id}`);
-        socket.emit('roomCreated', roomCode);
+        console.log(`Room created: ${roomCode} (${roomType}) by ${socket.id}`);
+        // Send back code AND type so the client knows what mode to set
+        socket.emit('roomCreated', { code: roomCode, type: roomType });
 
         // Emit initial count (1)
         socket.emit('updateUserCount', { count: 1 });
@@ -105,7 +110,12 @@ io.on('connection', (socket) => {
         if (room) {
             socket.join(upperCode);
             console.log(`User ${socket.id} joined room ${upperCode}`);
-            socket.emit('roomJoined', upperCode);
+            
+            // Get the room type to inform the new user
+            const type = roomTypes.get(upperCode) || 'concert';
+            
+            // Send back code AND type so the guest client knows permissions
+            socket.emit('roomJoined', { code: upperCode, type: type });
             
             // Notify other users in the room
             socket.to(upperCode).emit('userJoined');
@@ -141,7 +151,10 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- 5. PLAYBACK CONTROLS (Host -> Server -> Guests) ---
+    // --- 5. PLAYBACK CONTROLS ---
+    // In 'collaborative' mode, ANY user can trigger these. 
+    // In 'concert' mode, usually only Host triggers these, but the server just forwards regardless.
+    // The Client is responsible for enforcing the "who can click" logic.
     socket.on('play', (data) => {
         if (data && data.room) {
             socket.to(data.room).emit('play', data);
@@ -169,7 +182,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- 7. LEAVE ROOM (Updated for Host Logic) ---
+    // --- 7. LEAVE ROOM ---
     socket.on('leaveRoom', (roomCode) => {
         if (roomCode) {
             const isHost = roomHosts.get(roomCode) === socket.id;
@@ -179,6 +192,7 @@ io.on('connection', (socket) => {
                 io.to(roomCode).emit('roomClosed'); 
                 io.in(roomCode).socketsLeave(roomCode); // Force everyone out
                 roomHosts.delete(roomCode);
+                roomTypes.delete(roomCode);
                 console.log(`Room closed by host: ${roomCode}`);
             } else {
                 // If Guest leaves, just notify others
@@ -217,6 +231,7 @@ io.on('connection', (socket) => {
                 io.to(roomCode).emit('roomClosed');
                 io.in(roomCode).socketsLeave(roomCode);
                 roomHosts.delete(roomCode);
+                roomTypes.delete(roomCode);
                 console.log(`Host disconnected, closed room: ${roomCode}`);
                 break;
             }
